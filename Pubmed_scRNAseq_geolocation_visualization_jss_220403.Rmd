@@ -1,0 +1,180 @@
+---
+title: "PubMed Search and Geo-Spatial Visualization"
+output: html_document
+---
+Install packages
+
+```{r}
+install.packages("easyPubMed")
+install.packages("XML")
+install.packages("ggmap")
+install.packages("gganimate")
+```
+
+# Retrieve information on publications from Pubmed using easyPubMed
+Following: http://cran.nexr.com/web/packages/easyPubMed/vignettes/easyPM_vignette_html.html
+
+```{r}
+library(easyPubMed)
+library(XML)
+```
+
+```{r}
+new_PM_query <- '"Single cell RNA-seq" OR "Single-cell RNA-seq" OR "Single nuclei RNA-seq" OR "Single-nuclei RNA-seq" OR "Single-cell Transcriptomics" OR "Single cell Transcriptomics" OR "Single-nuclei Transcriptomics" OR "Single nuclei Transcriptomics" OR "Single Cell RNA Sequencing" OR "Single-Cell RNA Sequencing" OR "Single-nuclei RNA Sequencing" OR "Single-nuclei RNA Sequencing" OR "scRNAseq" OR "scRNA-seq" OR "snRNAseq" OR "snRNA-seq" NOT Review[pt]'
+```
+
+```{r}
+out.batches <- batch_pubmed_download(pubmed_query_string = new_PM_query, 
+                                     dest_file_prefix = "pubmed_queries", 
+                                     batch_size = 100)
+```
+
+This step is not particularly fast! Actually it is very slow. 
+```{r}
+results_list <- list()
+
+for(i in 1:length(out.batches)){
+  print(paste("Batch ",i, sep=""))
+  
+  # Retrieve the full name of the XML file downloaded in the previous step
+  PM_file <- out.batches[i]
+  PM_df <- table_articles_byAuth(pubmed_data = PM_file, 
+                                 included_authors = "last", 
+                                 max_chars = 0)
+  results_list[[i]] <- PM_df
+}
+
+full_results <- do.call(rbind, results_list)
+```
+
+Printing a sample of the resulting data frame
+```{r}
+print(full_results[1:20, c("pmid", "year", "title", "jabbrv", "lastname", "address")])  
+```
+
+
+```{r}
+write.csv(full_results, file = "pubmed_scRNAseq_query_results.csv")
+```
+
+# Get Geo-Spatial Location Info from Google Maps
+https://www.jessesadler.com/post/geocoding-with-r/
+
+```{r}
+library(ggmap)
+```
+
+Set Google Maps API key 
+```{r}
+register_google(key = "[your_key]")
+```
+
+This step requires the Google API and costs real money (0.005$ per query)! 
+
+```{r}
+locations_df <- mutate_geocode(full_results[!is.na(full_results$address),], address)
+```
+
+Save the resulting table!
+```{r}
+write.csv(locations_df, file = "pubmed_scRNAseq_geolocation_results.csv")
+```
+
+Remove those entries of the table for which the retrieval of the geospatial location failed!
+```{r}
+locations_df <- locations_df[!is.na(locations_df$lon),]
+```
+
+Printing a sample of the resulting data frame
+```{r}
+print(locations_df[1:20, c("pmid", "year", "title", "jabbrv", "lastname", "address", "lon", "lat")]) 
+```
+
+# Mark publications on COVID19
+```{r}
+locations_df$COVID19 <- factor(ifelse(grepl("^Corona$|^Coronavirus$|Sars-Cov-2|Sars-Cov2|COVID-19|COVID19",
+                                            locations_df$title),"COVID19","other"), levels=c("COVID19", "other"))
+table(locations_df$COVID19 )
+```
+
+# Plot static plot of publication data on a world map
+https://www.r-bloggers.com/2013/04/r-beginners-plotting-locations-on-to-a-world-map/ 
+
+
+```{r}
+library(ggplot2)
+```
+
+```{r, fig.width=2, fig.height=20}
+mp <- NULL
+
+mp <- ggplot(locations_df,aes(x=lon, y=lat)) +  
+  borders("world", colour="gray50", fill="gray50") +
+  geom_point(data=locations_df[locations_df$COVID19=="other",],aes(x=lon, y=lat),color="#ffb600", size=0.5) + 
+  geom_point(data=locations_df[locations_df$COVID19=="COVID19",],aes(x=lon, y=lat),color="#bf4f51", size=0.5) + 
+  facet_wrap(~year, ncol=1)+ 
+  theme_classic() + 
+  theme(axis.line=element_blank(),axis.text.x=element_blank(),
+        axis.text.y=element_blank(),axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+
+mp
+```
+
+```{r}
+cairo_pdf(filename = paste("cRNAseq_publications_geolocation_over_time_",Sys.Date(),".pdf",sep=""),
+         width = 2, height = 20)
+ plot(mp)
+dev.off()
+```
+
+# Generate animated plot of publication data on a world map over time
+https://www.alexcookson.com/post/2020-10-18-building-an-animation-step-by-step-with-gganimate/
+
+```{r}
+library(gganimate)
+library(ggthemes)
+```
+
+```{r}
+locations_df$date <- as.Date(paste(locations_df$month,locations_df$day, locations_df$year, sep="/"), format = "%m/%d/%Y")
+locations_df$year <- as.integer(locations_df$year)
+```
+
+
+```{r}
+world <- ggplot() +
+  borders("world", colour = "gray85", fill = "gray80") +
+  theme_map() 
+
+locations_df <- locations_df[order(locations_df$COVID19, locations_df$year, decreasing = TRUE),]
+
+map <- world+
+  geom_point(data=locations_df,aes(x=lon, y=lat, color=COVID19), 
+              size=2) + 
+  scale_color_manual(values=c("COVID19"="#bf4f51",
+                              "other"="#ffb600"))+
+  transition_events(start = year,
+                    end = year,
+                    range = as.integer(c(2011,2022)),
+                    enter_length = as.integer(1),
+                    exit_length = as.integer(1))+
+  labs(title = "'Single-cell Transcriptomics' publications on Pubmed per Year: {frame_time}")+
+  shadow_mark(alpha = 0.2, size = 0.8)
+```
+
+```{r}
+animate(map, start_pause = 1, end_pause = 1, height = 400, width = 600, fps = 5)
+```
+
+```{r}
+anim_save("Animated_map.gif")
+```
+
