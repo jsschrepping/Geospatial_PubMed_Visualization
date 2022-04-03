@@ -7,6 +7,6 @@ Subsequently, the addresses of the first/last/all authors are mutated into geosp
 
 Finally, the resulting information is visualized on a world map, either as static plots or animated gifs of time-resolved information.
 
-The example presented in the code shows the spread of single-cell transcriptomics technologies across the globe during the last century.
+The example presented in the code shows the spread of single-cell transcriptomics technologies across the globe over the last decade.
 
 ![Animated map of scRNAseq publications over time](Animated_map_scRNAseqPublications_jss_220403.gif)
